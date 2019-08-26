@@ -45,7 +45,7 @@ impl TCPFlowService {
         let init_start = time::now();
         let thread_name = thread::current().name().unwrap().to_string();
         println!("thread: {:?}, start at: {:?}, total: {:?}", thread_name, init_start, init_total);
-        let redis_client = redis::Client::open("redis://10.95.134.109:6379").unwrap();
+        let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
         let mut i = 1;
         let mut index_writer = index.writer(buffer).unwrap();
 

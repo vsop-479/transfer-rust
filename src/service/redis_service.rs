@@ -20,7 +20,7 @@ impl RedisService{
     }
 
     pub fn get_config(indices : Vec<&str>) -> Vec<ConsumerConfig>{
-        let client = redis::Client::open("redis://10.95.134.109:6379").unwrap();
+        let client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
         let mut conn = client.get_connection().unwrap();
         let mut consumer_configs : Vec<ConsumerConfig> = Vec::new();
 
