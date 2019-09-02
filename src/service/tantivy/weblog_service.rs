@@ -6,6 +6,8 @@ use crate::service::redis_service::RedisService;
 use crate::service::tantivy::tantivy_service::TantivyService;
 use std::thread;
 use std::io::Write;
+use tantivy::merge_policy::{NoMergePolicy, MergePolicy};
+use std::time::Duration;
 
 pub struct WEBLogService {}
 
@@ -38,15 +40,15 @@ impl WEBLogService {
         schema
     }
 
-    pub fn bulk(index : Index, schema : Schema, commit_interval : u32, buffer : usize, batch_size : u32){
+    pub fn bulk(mergePolicy: Box<dyn MergePolicy>, num_threads : usize, index : Index, schema : Schema, commit_interval : u32, buffer : usize, batch_size : u32){
         let init_total = TantivyService::get_total(index.clone(), schema.clone());
         let init_start = time::now();
         let thread_name = thread::current().name().unwrap().to_string();
         println!("thread: {:?}, start at: {:?}, total: {:?}", thread_name, init_start, init_total);
         let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
         let mut i = 1;
-        let mut index_writer = index.writer(buffer).unwrap();
-        
+        let mut index_writer = index.writer_with_num_threads(num_threads, buffer).unwrap();
+        index_writer.set_merge_policy(mergePolicy);
         let origin = schema.get_field("origin").unwrap();
         let sip = schema.get_field("sip").unwrap();
         let uri_md5 = schema.get_field("uri_md5").unwrap();
@@ -70,6 +72,18 @@ impl WEBLogService {
             let datas = RedisService::get_data("logcenter:skyeye-weblog", batch_size, redis_client.clone()).unwrap();
             let len = datas.clone().len();
             let start = time::now();
+            if len == 0{
+                if(i > 0){
+                    index_writer.commit();
+                    let end = time::now();
+                    let total = TantivyService::get_total(index.clone(), schema.clone());
+                    println!("thread: {:?}, total docs: {:?}, total added: {:?}, bulk size: {:?}, took: {:?}, total took: {:?}"
+                             ,thread_name, total, total - init_total, len, end - start, end - init_start);
+                }
+                i = 0;
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            }
             for data in datas{
                 let mut doc = Document::new();
                 let json_value = json::parse(&data).unwrap();
@@ -128,7 +142,7 @@ impl WEBLogService {
 
                 index_writer.add_document(doc);
             }
-            if i % commit_interval == 0{
+            if i == commit_interval{
                 index_writer.commit();
                 let end = time::now();
                 let total = TantivyService::get_total(index.clone(), schema.clone());

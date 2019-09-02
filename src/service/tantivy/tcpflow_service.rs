@@ -5,6 +5,8 @@ use tantivy::collector::TopDocs;
 use crate::service::redis_service::RedisService;
 use crate::service::tantivy::tantivy_service::TantivyService;
 use std::thread;
+use tantivy::merge_policy::{NoMergePolicy, MergePolicy};
+use std::time::Duration;
 
 pub struct TCPFlowService{}
 
@@ -40,15 +42,15 @@ impl TCPFlowService {
         schema
     }
 
-    pub fn bulk(index : Index, schema : Schema, commit_interval : u32, buffer : usize, batch_size : u32){
+    pub fn bulk(mergePolicy: Box<dyn MergePolicy>, num_threads : usize, index : Index, schema : Schema, commit_interval : u32, buffer : usize, batch_size : u32){
         let init_total = TantivyService::get_total(index.clone(), schema.clone());
         let init_start = time::now();
         let thread_name = thread::current().name().unwrap().to_string();
         println!("thread: {:?}, start at: {:?}, total: {:?}", thread_name, init_start, init_total);
         let redis_client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
         let mut i = 1;
-        let mut index_writer = index.writer(buffer).unwrap();
-
+        let mut index_writer = index.writer_with_num_threads(num_threads, buffer).unwrap();
+        index_writer.set_merge_policy(mergePolicy);
         let status = schema.get_field("status").unwrap();
         let dst_mac = schema.get_field("dst_mac").unwrap();
         let sip = schema.get_field("sip").unwrap();
@@ -73,6 +75,18 @@ impl TCPFlowService {
             let datas = RedisService::get_data("logcenter:skyeye-tcpflow", batch_size, redis_client.clone()).unwrap();
             let len = datas.clone().len();
             let start = time::now();
+            if len == 0{
+                if(i > 0){
+                    index_writer.commit();
+                    let end = time::now();
+                    let total = TantivyService::get_total(index.clone(), schema.clone());
+                    println!("thread: {:?}, total docs: {:?}, total added: {:?}, bulk size: {:?}, took: {:?}, total took: {:?}"
+                             ,thread_name, total, total - init_total, len, end - start, end - init_start);
+                }
+                i = 0;
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            }
             for data in datas{
                 let mut doc = Document::new();
                 let json_value = json::parse(&data).unwrap();
